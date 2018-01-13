@@ -17,11 +17,12 @@ edge_dt = np.dtype([('left', np.float),
                     ('parent', np.int32),
                     ('child', np.int32)])
 
-mutation_dt = np.dtype([('position',np.float64), 
+mutation_dt = np.dtype([('position',np.float64),
  						('node_id',np.int32)])
- 						
+
 # Simulation with be popsize*SIMLEN generations
-SIMLEN = 20
+# SIMLEN = 20
+SIMLEN = 1
 
 
 class MockAncestryTracker(object):
@@ -54,7 +55,7 @@ class MockAncestryTracker(object):
     @edges.setter
     def edges(self, value):
         self.__edges = value
-        
+
     @property
     def mutations(self):
         return self.__mutations
@@ -85,8 +86,8 @@ class MockAncestryTracker(object):
     def convert_time(self):
         """
         Convert from forwards time to backwards time.
-        
-        This results in self.nodes['generation'].min() 
+
+        This results in self.nodes['generation'].min()
         equal to -0.0 (e.g, 0.0 with the negative bit set),
         but msprime does not seem to mind.
         """
@@ -155,6 +156,8 @@ class ARGsimplifier(object):
         # Convert time from forwards to backwards
         tracker.convert_time()
 
+        print("updating", len(self.nodes), len(self.sites), len(self.mutations))
+
         # Update internal *Tables
         self.nodes.append_columns(flags=flags,
                                   population=tracker.nodes['population'],
@@ -163,20 +166,24 @@ class ARGsimplifier(object):
                                   right=tracker.edges['right'],
                                   parent=tracker.edges['parent'],
                                   child=tracker.edges['child'])
+
+        m = len(tracker.mutations['position'])
         self.sites.append_columns(position=tracker.mutations['position'],
-                   ancestral_state=np.zeros(len(tracker.mutations['position']),np.int8),
-                   ancestral_state_offset=np.arange(len(tracker.mutations['position'])+1,dtype=np.uint32))
-    
-        self.mutations.append_columns(site=np.arange(len(tracker.mutations['node_id']),dtype=np.int32) + self.mutations.num_rows,
+                   ancestral_state=np.zeros(m, np.int8) + ord('0'),
+                   ancestral_state_offset=np.arange(m + 1,dtype=np.uint32))
+
+        self.mutations.append_columns(
+                   site=np.arange(m, dtype=np.int32) + self.mutations.num_rows,
                    node=tracker.mutations['node_id'],
-                   derived_state=np.ones(len(tracker.mutations['node_id']),np.int8),
-                   derived_state_offset=np.arange(len(tracker.mutations['position'])+1,dtype=np.uint32))
-                   #derived_state_length=np.ones(len(tracker.mutations['node_id']),np.uint32))
-                   
+                   derived_state=np.ones(m ,np.int8) + ord('0'),
+                   derived_state_offset=np.arange(m + 1,dtype=np.uint32))
+
         # Sort and simplify
         msprime.sort_tables(nodes=self.nodes, edges=self.edges, sites=self.sites, mutations=self.mutations)
         msprime.simplify_tables(samples=tracker.samples.tolist(),
                                 nodes=self.nodes, edges=self.edges, sites=self.sites, mutations=self.mutations)
+
+        # print(ts.tables)
         # Return length of NodeTable,
         # which can be used as next offspring ID
         return self.nodes.num_rows
@@ -238,11 +245,11 @@ class ARGsimplifier(object):
         self.__mutations = value
 
 def xover(rate):
-    """ 
+    """
     This is a mimic of a fwdpp
     recombination policy.
 
-    We return a sorted list of breakpoints 
+    We return a sorted list of breakpoints
     on the interval [0,1).  The list is capped
     with the max value of a float (C/C++ double),
     which is a trick fwdpp uses.
@@ -270,7 +277,7 @@ def split_breakpoints(breakpoints):
     by gamete 1 and gamete 2
 
     Note: bug source could be here. If breakpoints[0] == 0.0,
-    we will insert stuff 2x into s1. This needs updating, 
+    we will insert stuff 2x into s1. This needs updating,
     and so does the C++ version that this is copied from...
     """
     s1 = np.array([(0.0, breakpoints[0])], dtype=[
@@ -326,13 +333,13 @@ def mutation_loci(rate, lookup):
         lookup[rv[i]] = True;
         i+=1
     return rv
-    
+
 def handle_mutation_update(mutations_all, new_mutation_node_id, new_mutation_locs):
-	if(len(new_mutation_locs) > 0): 
+	if(len(new_mutation_locs) > 0):
 	    new_mutations = [(pos,new_mutation_node_id) for pos in new_mutation_locs]
 	    mutations_all.extend(new_mutations)
 	return mutations_all
-	
+
 
 def wf(N, simplifier, tracker, recrate, murate, ngens):
     """
@@ -351,7 +358,7 @@ def wf(N, simplifier, tracker, recrate, murate, ngens):
     4. Crossing over is a Poisson process, and the code used here (above)
        is modeled after that in our C++ implementation.
     5. Mutation is a Poisson process, mutations are added according to each
-       parental index. 
+       parental index.
     """
     diploids = np.arange(2 * N, dtype=np.uint32)
     # so we pre-allocate the space. We only need
@@ -404,11 +411,11 @@ def wf(N, simplifier, tracker, recrate, murate, ngens):
 
         # Store temp edges for this generation
         edges = []  # np.empty([0], dtype=edge_dt)
-        
+
         #Store temp mutations for this generation
         mutations = []  #np.empty([0], dtype=mutation_dt)
         # Pick 2N parents:
-        parents = np.random.randint(0, N, 2 * N) 
+        parents = np.random.randint(0, N, 2 * N)
         assert(parents.max() < N)
         dip = int(0)  # dummy index for filling contents of new_diploids
 
@@ -441,7 +448,7 @@ def wf(N, simplifier, tracker, recrate, murate, ngens):
             # Stuff is now being inherited by node next_id + 1
             breakpoints = xover(recrate)
             mloci = mutation_loci(murate, mutation_lookup)
-            
+
             edges = handle_recombination_update(
                 next_id + 1, p2g1, p2g2, edges, breakpoints)
             mutations = handle_mutation_update(
@@ -495,7 +502,7 @@ if __name__ == "__main__":
 
     if len(tracker.nodes) > 0:  # Then there's stuff that didn't get GC'd
         simplifier.simplify(ngens, tracker)
-            
+
     prior_ts = msprime.simulate(2 * args.popsize)
     nt = msprime.NodeTable()
     es = msprime.EdgeTable()
@@ -504,7 +511,7 @@ if __name__ == "__main__":
                    population=nt.population,#[2 * popsize:],
                    time=nt.time + ngens + 1)
     node_offset = nt.num_rows
-    
+
     # Local names for convenience.
     # I copy the tables here, too,
     # because I think that will be
@@ -531,7 +538,7 @@ if __name__ == "__main__":
     st.set_columns(position=sites.position,
                    ancestral_state=sites.ancestral_state,
                    ancestral_state_offset=sites.ancestral_state_offset)
-    
+
     mt = msprime.MutationTable()
     mt.set_columns(site=mutations.site,
                    node=mutations.node + node_offset,
@@ -543,14 +550,14 @@ if __name__ == "__main__":
     msprime.simplify_tables(samples=nsam_samples.tolist(),
                             nodes=nt, edges=es, sites=st, mutations=mt)
     print(sites.num_rows)
-    
+
     msp_rng = msprime.RandomGenerator(args.seed)
     mutations2 = msprime.MutationTable()
     sites2 = msprime.SiteTable()
     mutgen = msprime.MutationGenerator(
         msp_rng, args.theta / float(4 * args.popsize))
     mutgen.generate(nodes, edges, sites2, mutations2)
-    print(sites2.num_rows)    
+    print(sites2.num_rows)
 
     print("Us:")
     for i in range(10):
@@ -558,4 +565,4 @@ if __name__ == "__main__":
     print("Jerome:")
     for i in range(10):
        print(sites2[i])
-   
+
